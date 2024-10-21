@@ -1,0 +1,1 @@
+print(float(input("gimme yo c: ")) * 1.8 + 32)
