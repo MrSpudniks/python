@@ -3,102 +3,69 @@ from PyQt5.QtWidgets import QWidget  # Update imports for QScrollArea
 from PyQt5.QtCore import QRect
 import xml.etree.ElementTree as ET
 from xml.dom import minidom  # For pretty-printing the XML
-
-
-# Custom MMCFPButterflyValve widget class
-class MMCFPButterflyValve(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.size = 10  # Default size for the butterfly valve
-
-    def setGeometry(self, x, y, width, height):
-        # Call QWidget's setGeometry to set the position and size
-        super().setGeometry(QRect(x, y, width, height))
-
-
-# Custom MMCFPPipe widget class
-class MMCFPPipe(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.thickness = 5  # Default pipe thickness
-
-    def setGeometry(self, x, y, width, height):
-        # Call QWidget's setGeometry to set the position and size
-        super().setGeometry(QRect(x, y, width, height))
-
+import regex
 
 # Function to parse the DXF file and extract POLYLINE, LINE, and Block Reference entities
-def parse_dxf_file(dxf_file, scale_factor=2):
+def parse_dxf_file(dxf_file, thickness : int = 5, scale : float = 1, margin : int = 50):
     # Load the DXF file
     doc = ezdxf.readfile(dxf_file)
     lines = []
     butterfly_valves = []
     throttle_valves = []
 
-    min_x, min_y = float('inf'), float('inf')  # Initialize min_x and min_y to very large values
-    max_y = float('-inf')  # Initialize max_y to track the highest Y for flipping purposes
+    min_x, min_y = float('inf'), float('inf') # Initialize min_x and min_y to very large values
+    max_x, max_y = float('-inf'), float('-inf')  # Initialize max_y to track the highest Y for flipping purposes
+
+
+    for layer in doc.layers.entries:
+        layer[0]
 
     # Process POLYLINE and LWPOLYLINE entities
     for entity in doc.entities:
         if entity.dxftype() in ['LWPOLYLINE', 'POLYLINE']:
+
             points = entity.get_points('xy')  # Get the vertices of the polyline
 
             # Track the minimum and maximum x, y coordinates
             for x, y in points:
                 min_x = min(min_x, x)
+                max_x = max(max_x, x)
                 min_y = min(min_y, y)
                 max_y = max(max_y, y)
-
+            
             # Create segments from polyline vertices
             for i in range(len(points) - 1):
                 start_x, start_y = points[i]
                 end_x, end_y = points[i + 1]
 
-                length = ((end_x - start_x)**2 + (end_y - start_y)**2)**0.5
-                is_horizontal = abs(end_y - start_y) < abs(end_x - start_x)
+                width = round(max(start_x, end_x) - min(start_x, end_x)) * scale + thickness
+                height = round(max(start_y, end_y) - min(start_y, end_y)) * scale + thickness
 
                 lines.append({
-                    'start_x': start_x,
-                    'start_y': start_y,
-                    'end_x': end_x,
-                    'end_y': end_y,
-                    'length': length,
-                    'is_horizontal': is_horizontal
+                    'x': min(start_x, end_x),
+                    'y': max(start_y, end_y),
+                    'width': width,
+                    'height': height
                 })
 
-    # Process LINE entities
-    for entity in doc.entities:
         if entity.dxftype() == 'LINE':
             start_x, start_y, _ = entity.dxf.start
             end_x, end_y, _ = entity.dxf.end
 
-            delta_x = abs(end_x - start_x)
-            delta_y = abs(end_y - start_y)
-
-            # Swap coordinates if the line is "backward" (i.e., if Start X > End X)
-            #if start_x > end_x:
-            #    start_x, end_x = end_x, start_x
-            #    start_y, end_y = end_y, start_y
-
             # Track the minimum and maximum x, y coordinates
             min_x = min(min_x, start_x, end_x)
+            max_x = max(max_x, start_x, end_x)
             min_y = min(min_y, start_y, end_y)
             max_y = max(max_y, start_y, end_y)
 
-            length = ((end_x - start_x)**2 + (end_y - start_y)**2)**0.5
-            round(start_y, 2)
-            round(end_y, 2)
-            is_horizontal = start_y == end_y
-            
+            width = round(max(start_x, end_x) - min(start_x, end_x)) * scale + thickness
+            height = round(max(start_y, end_y) - min(start_y, end_y)) * scale + thickness
+
             lines.append({
-                'start_x': start_x,
-                'start_y': round(start_y, 2),
-                'delta_x': delta_x,
-                'delta_y': delta_y,
-                'end_x': end_x,
-                'end_y': round(end_y, 2),
-                'length': length,
-                'is_horizontal': is_horizontal
+                'x': min(start_x, end_x),
+                'y': max(start_y, end_y),
+                'width': width,
+                'height': height
             })
 
     # Process Block References for Butterfly Valves
@@ -164,77 +131,54 @@ def parse_dxf_file(dxf_file, scale_factor=2):
                 'enableValveMenu': valve_properties.get("enableValveMeny", "false") == "true",  # Convert to boolean
             })
 
+            print(block_ref.dxf.name)
 
-    # Subtract the minimum x and y values from all coordinates to shift them into the positive quadrant
-    # Also apply scaling and flip the Y coordinates by subtracting from max_y
+        
+
+    # fix coordinates
     for line in lines:
-        # Adjust length scaling if needed
-        line['length'] *= scale_factor
-        print(line['start_y'] , line['end_y'])
-        print(line['is_horizontal'])
-        if line['start_y'] == line['end_y']: # is horizontal
-            print("Is horizontal!")
-            if line['end_x'] > line['start_x']:
-                line['start_x'] = (line['start_x']) * scale_factor
-                line['start_y'] = (line['start_y']) * scale_factor
-            else:
-                # Scale and translate start_x and start_y
-                line['start_x'] = (line['end_x']) * scale_factor
-                line['start_y'] = ((line['start_y']) * scale_factor)  # <-----   TODO: ADD max_y HERE 
-                line['length'] = abs(line['delta_x'])
-                print(line['start_y'], line['length'])
-            
-        else:
-            print("Is vertical!")
-            if line['start_y'] > line['end_y']: # if line is drawn up->down
-                # Scale and translate start_x and start_y
-                line['start_x'] = (line['start_x']) * scale_factor
-                line['start_y'] = (line['end_y']) - abs(line['delta_y']) * scale_factor
-                #print("downwards line: " , line['start_x'], line['start_y'])
-            else:
-                line['start_x'] = (line['start_x']) * scale_factor
-                line['start_y'] = (line['start_y']  - line['length']) * scale_factor  # Flip Y-axis 
-                #print("upwards line: " , line['start_x'], line['start_y'])
-
-
+        line["y"] = round(max_y - line["y"])
+        line["y"] = round(line["y"] + margin / scale) * scale
+        line["x"] = round(line["x"] - min_x + margin / scale) * scale
+        
     for valve in butterfly_valves:
-        valve['x'] = (valve['x']) * scale_factor
-        valve['y'] = (max_y - valve['y']) * scale_factor  # Correct Y-flip
-
+        valve["y"] = round(max_y - valve["y"])
+        valve["y"] = round(valve["y"] + margin / scale) * scale
+        valve["x"] = round(valve["x"] - min_x + margin / scale) * scale
 
     for valve in throttle_valves:
-        valve['x'] = (valve['x']) * scale_factor
-        valve['y'] = (max_y - valve['y']) * -scale_factor  # Correct Y-flip
+        valve["y"] = round(max_y - valve["y"])
+        valve["y"] = round(valve["y"] + margin / scale) * scale
+        valve["x"] = round(valve["x"] - min_x + margin / scale) * scale
 
+    max_x = round((max_x - min_x) * scale) + margin
+    max_y = round((max_y - min_y) * scale) + margin
+    min_x = margin
+    min_y = margin
 
-    return lines, butterfly_valves, throttle_valves
+    print(round(min_x), round(max_x), round(min_y), round(max_y))
+    return lines, butterfly_valves, throttle_valves, max_x, max_y
 
 
 
 # Function to create an MMCFPPipe widget based on parsed LINE info
-def create_pipe_widget_xml(line, widget_id, max_y):  # Add max_y as a parameter
-    width = 5
-    x = line['start_x']
-    y = line['start_y']
-    length = line['length']
-    is_horizontal = line['is_horizontal']
-    
+def create_pipe_widget_xml(line, widget_id):  # Add max_y as a parameter
+
     widget = ET.Element('widget', {'class': 'MMCFPPipe', 'name': f'pipe_{widget_id}'})
     
     geometry = ET.SubElement(widget, 'property', {'name': 'geometry'})
     rect = ET.SubElement(geometry, 'rect')
 
-    ET.SubElement(rect, 'x').text = str(int(max_y + x))
-    ET.SubElement(rect, 'y').text = str(int(max_y + y))  # Adjusted Y-coordinate
-    ET.SubElement(rect, 'width').text = str(int(length+((width/2))+1) if is_horizontal else width)
-    ET.SubElement(rect, 'height').text = str(5 if is_horizontal else int(length+((width/2)+1)))
-    print("Created LINE: ", x, y, max_y)
+    ET.SubElement(rect, 'x').text = str(line["x"])
+    ET.SubElement(rect, 'y').text = str(line["y"])
+    ET.SubElement(rect, 'width').text = str(line["width"])
+    ET.SubElement(rect, 'height').text = str(line["height"])
     return widget
 
 
 
 # Function to create an MMCFPButterflyValve widget based on parsed valve info
-def create_butterfly_valve_widget_xml(valve, widget_id, max_y):  # Add max_y as a parameter
+def create_butterfly_valve_widget_xml(valve, widget_id, scale):  # Add max_y as a parameter
     x = valve['x']
     y = valve['y']
 
@@ -244,11 +188,11 @@ def create_butterfly_valve_widget_xml(valve, widget_id, max_y):  # Add max_y as 
     rect = ET.SubElement(geometry, 'rect')
     
     if valve['rotate'] == 0:
-        ET.SubElement(rect, 'x').text = str(int(max_y + x) - 8)
-        ET.SubElement(rect, 'y').text = str(int(max_y + y) + 13)  # Adjusted Y-coordinate
+        ET.SubElement(rect, 'x').text = str(int(x) - 0)
+        ET.SubElement(rect, 'y').text = str(int(y) - 0)
     else:
-        ET.SubElement(rect, 'x').text = str(int(max_y + x) - 8)
-        ET.SubElement(rect, 'y').text = str(int(max_y + y) + 8)  # Adjusted Y-coordinate
+        ET.SubElement(rect, 'x').text = str(int(x) - 0)
+        ET.SubElement(rect, 'y').text = str(int(y) - 0)
     
     ET.SubElement(rect, 'width').text = str(18)
     ET.SubElement(rect, 'height').text = str(18)
@@ -269,7 +213,7 @@ def create_butterfly_valve_widget_xml(valve, widget_id, max_y):  # Add max_y as 
     return widget
 
 # Function to create an MMCFPThrottleValve widget based on parsed valve info
-def create_throttle_valve_widget_xml(valve, widget_id, max_y):  # Add max_y as a parameter
+def create_throttle_valve_widget_xml(valve, widget_id):  # Add max_y as a parameter
     x = valve['x']
     y = valve['y']
     
@@ -279,8 +223,8 @@ def create_throttle_valve_widget_xml(valve, widget_id, max_y):  # Add max_y as a
     geometry = ET.SubElement(widget, 'property', {'name': 'geometry'})
     rect = ET.SubElement(geometry, 'rect')
 
-    ET.SubElement(rect, 'x').text = str(int(max_y + x))
-    ET.SubElement(rect, 'y').text = str(int(max_y - y))  # Adjusted Y-coordinate
+    ET.SubElement(rect, 'x').text = str(round(x + 14))
+    ET.SubElement(rect, 'y').text = str(round(y + 13))
     ET.SubElement(rect, 'width').text = str(28)
     ET.SubElement(rect, 'height').text = str(26)
 
@@ -314,7 +258,7 @@ def save_pretty_xml(tree, output_ui_file):
 
 
 # Function to generate the .ui file based on parsed lines and valves
-def generate_ui_file(parsed_lines, parsed_valves, output_ui_file):
+def generate_ui_file(parsed_lines : list, parsed_valves : list, output_ui_file : str, scale : float, margin : int, max_x : int, max_y : int):
     # Create the root UI element with the specified version
     ui = ET.Element('ui', {'version': '4.0'})
     
@@ -328,8 +272,8 @@ def generate_ui_file(parsed_lines, parsed_valves, output_ui_file):
     rect = ET.SubElement(geometry, 'rect')
     ET.SubElement(rect, 'x').text = '0'
     ET.SubElement(rect, 'y').text = '0'
-    ET.SubElement(rect, 'width').text = '1920'
-    ET.SubElement(rect, 'height').text = '999'
+    ET.SubElement(rect, 'width').text = str(max_x + margin)
+    ET.SubElement(rect, 'height').text = str(max_y + margin)
     
     base_size = ET.SubElement(scroll_area, 'property', {'name': 'baseSize'})
     size = ET.SubElement(base_size, 'size')
@@ -356,24 +300,24 @@ def generate_ui_file(parsed_lines, parsed_valves, output_ui_file):
     contents_rect = ET.SubElement(contents_geometry, 'rect')
     ET.SubElement(contents_rect, 'x').text = '0'
     ET.SubElement(contents_rect, 'y').text = '0'
-    ET.SubElement(contents_rect, 'width').text = '1920'
-    ET.SubElement(contents_rect, 'height').text = '999'
+    ET.SubElement(contents_rect, 'width').text = str(max_x + margin)
+    ET.SubElement(contents_rect, 'height').text = str(max_y + margin)
     
    
     
     # Add the pipe widgets
     for i, line in enumerate(parsed_lines):
-        line_widget = create_pipe_widget_xml(line, i, 100)
+        line_widget = create_pipe_widget_xml(line, i)
         scroll_area_widget_contents.append(line_widget)
 
     # Add the butterfly valve widgets
     for i, valve in enumerate(parsed_valves):
-        valve_widget = create_butterfly_valve_widget_xml(valve, i, 100)
+        valve_widget = create_butterfly_valve_widget_xml(valve, i, scale)
         scroll_area_widget_contents.append(valve_widget)
     
      # Add the throttleValves valve widgets
     for i, valve in enumerate(parsed_thrValves):
-        valve_widget = create_throttle_valve_widget_xml(valve, i, 100)
+        valve_widget = create_throttle_valve_widget_xml(valve, i)
         scroll_area_widget_contents.append(valve_widget)
 
     # Add the custom widgets section before closing the UI
@@ -390,11 +334,14 @@ def generate_ui_file(parsed_lines, parsed_valves, output_ui_file):
 # Main execution flow
 if __name__ == "__main__":
     # Specify the DXF file to parse and the output UI file
-    dxf_file = 'Pipes.dxf'
+    dxf_file = ["Pipes", "Pipes_negativeCoords", "Pipes_centered", "TankDrainSys", "VacuumSys"][4]
+    dxf_file = f"dxf_files/{dxf_file}.dxf"
     output_ui_file = 'output.ui'
+    scale = 2
+    margin = 50
     
-    parsed_lines, parsed_valves, parsed_thrValves = parse_dxf_file(dxf_file)
-    generate_ui_file(parsed_lines, parsed_valves, output_ui_file)
+    parsed_lines, parsed_valves, parsed_thrValves, max_x, max_y = parse_dxf_file(dxf_file, scale = scale, margin = margin)
+    generate_ui_file(parsed_lines, parsed_valves, output_ui_file, scale, margin, max_x, max_y)
 
     print(f"Generated {output_ui_file} successfully.")
 
