@@ -4,6 +4,36 @@ from PyQt5.QtCore import QRect
 import xml.etree.ElementTree as ET
 from xml.dom import minidom  # For pretty-printing the XML
 import regex
+import math
+
+
+
+class misc:
+    def average(*values : float):
+        return sum(values) / len(values)
+
+    def difference(x, y):
+        return max(x, y) - min(x, y)
+
+    def distance(point_1 : dict, point_2 : dict):
+        return math.sqrt(misc.difference(point_1["x"], point_2["x"]) ** 2 + misc.difference(point_1["y"], point_2["y"]) ** 2)
+
+    def reduction_to_pipe(points : list[dict]):
+        if len(points) != 4:
+            return None
+        pairs : list[list] = []
+        point_1 = points[0]
+        points.pop(0)
+        for index, point in enumerate(points):
+            if point_1["x"] == point["x"] or point_1["y"] == point["y"]:
+                pairs.append([point_1, point])
+                points.remove(point)
+                pairs.append(points)
+            break
+
+        return [{"x": misc.average(pairs[0][0]["x"], pairs[0][1]["x"]), "y": misc.average(pairs[0][0]["y"], pairs[0][1]["y"])}, {"x": misc.average(pairs[1][0]["x"], pairs[1][1]["x"]), "y": misc.average(pairs[1][0]["y"], pairs[1][1]["y"])}]
+            
+
 
 # Function to parse the DXF file and extract POLYLINE, LINE, and Block Reference entities
 def parse_dxf_file(dxf_file, thickness : int = 5, scale : float = 1, margin : int = 50):
@@ -16,39 +46,52 @@ def parse_dxf_file(dxf_file, thickness : int = 5, scale : float = 1, margin : in
     min_x, min_y = float('inf'), float('inf') # Initialize min_x and min_y to very large values
     max_x, max_y = float('-inf'), float('-inf')  # Initialize max_y to track the highest Y for flipping purposes
 
-
-    for layer in doc.layers.entries:
-        layer[0]
-
     # Process POLYLINE and LWPOLYLINE entities
     for entity in doc.entities:
         if entity.dxftype() in ['LWPOLYLINE', 'POLYLINE']:
+            if regex.search("Piping$", entity.get_dxf_attrib("layer")) != None:
+                points = entity.get_points('xy')  # Get the vertices of the polyline
 
-            points = entity.get_points('xy')  # Get the vertices of the polyline
+                # Track the minimum and maximum x, y coordinates
+                for x, y in points:
+                    min_x = min(min_x, x)
+                    max_x = max(max_x, x)
+                    min_y = min(min_y, y)
+                    max_y = max(max_y, y)
+                
+                # Create segments from polyline vertices
+                for i in range(len(points) - 1):
+                    start_x, start_y = points[i]
+                    end_x, end_y = points[i + 1]
 
-            # Track the minimum and maximum x, y coordinates
-            for x, y in points:
-                min_x = min(min_x, x)
-                max_x = max(max_x, x)
-                min_y = min(min_y, y)
-                max_y = max(max_y, y)
+                    width = round(max(start_x, end_x) - min(start_x, end_x)) * scale + thickness
+                    height = round(max(start_y, end_y) - min(start_y, end_y)) * scale + thickness
+
+                    lines.append({
+                        'x': min(start_x, end_x),
+                        'y': max(start_y, end_y),
+                        'width': width,
+                        'height': height
+                    })
             
-            # Create segments from polyline vertices
-            for i in range(len(points) - 1):
-                start_x, start_y = points[i]
-                end_x, end_y = points[i + 1]
+            if regex.search("^0CO1$", entity.get_dxf_attrib("layer")) != None:
+                points = []
+                for x, y in entity.get_points("xy"):
+                    points.append({"x": round(x * 10) / 10, "y": round(y * 10) / 10})
 
-                width = round(max(start_x, end_x) - min(start_x, end_x)) * scale + thickness
-                height = round(max(start_y, end_y) - min(start_y, end_y)) * scale + thickness
+                if len(points) == 4:
+                    points = misc.reduction_to_pipe(points)
 
-                lines.append({
-                    'x': min(start_x, end_x),
-                    'y': max(start_y, end_y),
-                    'width': width,
-                    'height': height
-                })
+                    for point in points:
+                        min_x = min(min_x, point["x"])
+                        max_x = max(max_x, point["x"])
+                        min_y = min(min_y, point["y"])
+                        max_y = max(max_y, point["y"])
 
-        if entity.dxftype() == 'LINE':
+                    
+
+
+        if entity.dxftype() == 'LINE' and regex.search("Piping$", entity.get_dxf_attrib("layer")) != None:
             start_x, start_y, _ = entity.dxf.start
             end_x, end_y, _ = entity.dxf.end
 
@@ -131,9 +174,6 @@ def parse_dxf_file(dxf_file, thickness : int = 5, scale : float = 1, margin : in
                 'enableValveMenu': valve_properties.get("enableValveMeny", "false") == "true",  # Convert to boolean
             })
 
-            print(block_ref.dxf.name)
-
-        
 
     # fix coordinates
     for line in lines:
@@ -156,7 +196,6 @@ def parse_dxf_file(dxf_file, thickness : int = 5, scale : float = 1, margin : in
     min_x = margin
     min_y = margin
 
-    print(round(min_x), round(max_x), round(min_y), round(max_y))
     return lines, butterfly_valves, throttle_valves, max_x, max_y
 
 
@@ -334,7 +373,7 @@ def generate_ui_file(parsed_lines : list, parsed_valves : list, output_ui_file :
 # Main execution flow
 if __name__ == "__main__":
     # Specify the DXF file to parse and the output UI file
-    dxf_file = ["Pipes", "Pipes_negativeCoords", "Pipes_centered", "TankDrainSys", "VacuumSys"][4]
+    dxf_file = ["Pipes", "Pipes_negativeCoords", "Pipes_centered", "TankDrainSys", "VacuumSys"][3]
     dxf_file = f"dxf_files/{dxf_file}.dxf"
     output_ui_file = 'output.ui'
     scale = 2
